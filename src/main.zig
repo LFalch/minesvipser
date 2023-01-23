@@ -9,15 +9,33 @@ const legacy_input = false;
 
 const Cursor = struct { x: usize, y: usize };
 
-pub fn main() !void {
-    const grid_w = if (os.argv.len > 1) try std.fmt.parseInt(usize, mem.span(os.argv[1]), 10) else 10;
-    const grid_h = if (os.argv.len > 2) try std.fmt.parseInt(usize, mem.span(os.argv[2]), 10) else 10;
+pub fn main() !u8 {
+    term_main() catch |e| {
+        const stderr = std.io.getStdErr().writer();
+        switch (e) {
+            error.TooManyBombs => try stderr.print("Too many bombs for given grid size\n", .{}),
+            error.TermTooSmall => try stderr.print("Terminal screen is too small for given grid size\n", .{}),
+            error.InvalidCharacter => try stderr.print("Usage: {s} [width=8] [height=8] [bomb count=10]\n", .{os.argv[0]}),
+            error.Overflow => try stderr.print("Argument was too big\n", .{}),
+            error.OutOfMemory => try stderr.print("Ran out of memory allocating the grid\n", .{}),
+
+            else => {
+                try stderr.print("Unexpected error: {s}", .{@errorName(e)});
+                return e;
+            }
+        }
+        return 1;
+    };
+
+    return 0;
+}
+
+pub fn term_main() !void {
+    const grid_w = if (os.argv.len > 1) try std.fmt.parseInt(usize, mem.span(os.argv[1]), 10) else 8;
+    const grid_h = if (os.argv.len > 2) try std.fmt.parseInt(usize, mem.span(os.argv[2]), 10) else 8;
     const bombs = if (os.argv.len > 3) try std.fmt.parseInt(usize, mem.span(os.argv[3]), 10) else 10;
 
-    if (bombs > grid_w*grid_h) {
-        try std.io.getStdOut().writer().print("Too many bombs for given grid size\n", .{});
-        return;
-    }
+    if (bombs > grid_w*grid_h) return error.TooManyBombs;
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -50,6 +68,8 @@ pub fn main() !void {
     });
 
     try term.fetchSize();
+    if (term.width < grid_w or term.height < grid_h) return error.TermTooSmall;
+
     try term.setWindowTitle("minesvipser", .{});
 
     var fds: [1]os.pollfd = undefined;
