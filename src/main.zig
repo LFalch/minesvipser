@@ -7,6 +7,8 @@ var term: spoon.Term = undefined;
 
 const legacy_input = false;
 
+const Cursor = struct { x: usize, y: usize };
+
 pub fn main() !void {
     term = spoon.Term{};
     try term.init(.{});
@@ -44,7 +46,7 @@ pub fn main() !void {
     var running = true;
     var lost = false;
 
-    var cursor: ?struct { x: usize, y: usize } = null;
+    var cursor: ?Cursor = null;
 
     while (running) {
         var render = try term.getRenderContext();
@@ -116,7 +118,7 @@ pub fn main() !void {
                         }
                     } else if (in.eqlDescription("arrow-left")) {
                         if (cursor) |*m| {
-                            m.x -= 1;
+                            m.x -|= 1;
                         } else cursor = .{ .x = 0, .y = 0 };
                     } else if (in.eqlDescription("arrow-right")) {
                         if (cursor) |*m| {
@@ -124,7 +126,7 @@ pub fn main() !void {
                         } else cursor = .{ .x = 0, .y = 0 };
                     } else if (in.eqlDescription("arrow-up")) {
                         if (cursor) |*m| {
-                            m.y -= 1;
+                            m.y -|= 1;
                         } else cursor = .{ .x = 0, .y = 0 };
                     } else if (in.eqlDescription("arrow-down")) {
                         if (cursor) |*m| {
@@ -132,6 +134,10 @@ pub fn main() !void {
                         } else cursor = .{ .x = 0, .y = 0 };
                     }
                 },
+            }
+
+            if (cursor) |*c| {
+                grid.keepCursorInBounds(c);
             }
         }
     }
@@ -284,6 +290,10 @@ const Grid = struct {
             if (!isBomb and !isShown) return false;
         }
         return true;
+    }
+    pub fn keepCursorInBounds(self: *const Self, cursor: *Cursor) void {
+        if (cursor.x >= self.width) cursor.x = self.width - 1;
+        if (cursor.y >= self.bytes.len/self.width) cursor.y = self.bytes.len/self.width-1;
     }
     inline fn increment(self: *Self, x: usize, y: usize) !void {
         const index = try self.getIndex(x, y);
