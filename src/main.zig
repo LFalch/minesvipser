@@ -10,6 +10,37 @@ const legacy_input = false;
 const Cursor = struct { x: usize, y: usize };
 
 pub fn main() !void {
+    const grid_w = if (os.argv.len > 1) try std.fmt.parseInt(usize, mem.span(os.argv[1]), 10) else 10;
+    const grid_h = if (os.argv.len > 2) try std.fmt.parseInt(usize, mem.span(os.argv[2]), 10) else 10;
+    const bombs = if (os.argv.len > 3) try std.fmt.parseInt(usize, mem.span(os.argv[3]), 10) else 10;
+
+    if (bombs > grid_w*grid_h) {
+        try std.io.getStdOut().writer().print("Too many bombs for given grid size\n", .{});
+        return;
+    }
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    var grid = try Grid.init(grid_w, grid_h, alloc);
+    defer grid.deinit();
+
+    {
+        var rand = std.rand.DefaultPrng.init(@bitCast(u64, std.time.timestamp()));
+        var bombs_placed: usize = 0;
+        while (bombs_placed < bombs) {
+            const x = rand.random().intRangeAtMost(usize, 0, grid_w-1);
+            const y = rand.random().intRangeAtMost(usize, 0, grid_h-1);
+            grid.placeBomb(x, y) catch |e| switch (e) {
+                error.AlreadyBomb => continue,
+                else => return e,
+            };
+
+            bombs_placed += 1;
+        }
+    }
+
     term = spoon.Term{};
     try term.init(.{});
     defer term.deinit();
@@ -20,21 +51,6 @@ pub fn main() !void {
 
     try term.fetchSize();
     try term.setWindowTitle("minesvipser", .{});
-
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
-
-    var grid = try Grid.init(10, 10, alloc);
-    defer grid.deinit();
-
-    try grid.placeBomb(0, 0);
-    try grid.placeBomb(5, 5);
-    try grid.placeBomb(2, 2);
-    try grid.placeBomb(5, 3);
-    try grid.placeBomb(2, 4);
-    try grid.placeBomb(2, 3);
-    try grid.placeBomb(3, 2);
 
     var fds: [1]os.pollfd = undefined;
     fds[0] = .{
@@ -112,7 +128,7 @@ pub fn main() !void {
                         if (cursor) |m| {
                             try grid.flag(m.x, m.y);
                         }
-                    } else if (in.eqlDescription("A-f")) {
+                    } else if (in.eqlDescription("A-f") or in.eqlDescription("C-f")) {
                         if (cursor) |m| {
                             try grid.unflag(m.x, m.y);
                         }
@@ -293,7 +309,7 @@ const Grid = struct {
     }
     pub fn keepCursorInBounds(self: *const Self, cursor: *Cursor) void {
         if (cursor.x >= self.width) cursor.x = self.width - 1;
-        if (cursor.y >= self.bytes.len/self.width) cursor.y = self.bytes.len/self.width-1;
+        if (cursor.y >= self.bytes.len / self.width) cursor.y = self.bytes.len / self.width - 1;
     }
     inline fn increment(self: *Self, x: usize, y: usize) !void {
         const index = try self.getIndex(x, y);
