@@ -5,12 +5,15 @@ const os = std.os;
 
 var term: spoon.Term = undefined;
 
+const legacy_input = false;
+
 pub fn main() !void {
     term = spoon.Term{};
     try term.init(.{});
     defer term.deinit();
     try term.uncook(.{
         .request_mouse_tracking = true,
+        .request_kitty_keyboard_protocol = !legacy_input,
     });
 
     try term.fetchSize();
@@ -39,24 +42,33 @@ pub fn main() !void {
     };
 
     var running = true;
+    var lost = false;
 
-    var mouse: ?struct { x: usize, y: usize } = null;
+    var cursor: ?struct { x: usize, y: usize } = null;
 
     while (running) {
         var render = try term.getRenderContext();
         try render.clear();
         try render.moveCursorTo(0, 0);
-        try render.setAttribute(spoon.Attribute{ .fg = .black, .bg = .white });
+        try render.setAttribute(spoon.Attribute{ .bg = .white });
 
-        try grid.render(&render);
+        if (!lost) {
+            try grid.render(&render);
 
-        if (try grid.hasWon()) {
+            if (try grid.hasWon()) {
+                try render.setAttribute(spoon.Attribute{ .bold = true });
+                try render.writeAllWrapping("\r\nYou won!");
+                running = false;
+            }
+        } else {
+            try grid.renderLost(&render);
+
             try render.setAttribute(spoon.Attribute{ .bold = true });
-            try render.writeAllWrapping("\r\nYou won!");
+            try render.writeAllWrapping("\r\nYou lost!");
             running = false;
         }
 
-        if (mouse) |m| {
+        if (cursor) |m| {
             try render.moveCursorTo(m.y, m.x);
             try render.showCursor();
         } else {
@@ -74,7 +86,7 @@ pub fn main() !void {
             switch (in.content) {
                 .mouse => |m| {
                     if (m.button != .release) {
-                        mouse = .{
+                        cursor = .{
                             .x = m.x,
                             .y = m.y,
                         };
@@ -82,37 +94,42 @@ pub fn main() !void {
                 },
                 else => {
                     if (in.eqlDescription("escape")) {
-                        mouse = null;
+                        cursor = null;
                     } else if (in.eqlDescription("q") or in.eqlDescription("C-c")) {
                         running = false;
-                    } else if (in.eqlDescription("space")) {
-                        if (mouse) |m| {
-                            try grid.click(m.x, m.y);
+                    } else if (in.eqlDescription("space") or in.eqlDescription("enter")) {
+                        if (cursor) |m| {
+                            grid.click(m.x, m.y) catch |e| switch (e) {
+                                error.Explode => {
+                                    lost = true;
+                                },
+                                else => return e,
+                            };
                         }
                     } else if (in.eqlDescription("f")) {
-                        if (mouse) |m| {
+                        if (cursor) |m| {
                             try grid.flag(m.x, m.y);
                         }
                     } else if (in.eqlDescription("A-f")) {
-                        if (mouse) |m| {
+                        if (cursor) |m| {
                             try grid.unflag(m.x, m.y);
                         }
                     } else if (in.eqlDescription("arrow-left")) {
-                        if (mouse) |*m| {
+                        if (cursor) |*m| {
                             m.x -= 1;
-                        } else mouse = .{ .x = 0, .y = 0 };
+                        } else cursor = .{ .x = 0, .y = 0 };
                     } else if (in.eqlDescription("arrow-right")) {
-                        if (mouse) |*m| {
+                        if (cursor) |*m| {
                             m.x += 1;
-                        } else mouse = .{ .x = 0, .y = 0 };
+                        } else cursor = .{ .x = 0, .y = 0 };
                     } else if (in.eqlDescription("arrow-up")) {
-                        if (mouse) |*m| {
+                        if (cursor) |*m| {
                             m.y -= 1;
-                        } else mouse = .{ .x = 0, .y = 0 };
+                        } else cursor = .{ .x = 0, .y = 0 };
                     } else if (in.eqlDescription("arrow-down")) {
-                        if (mouse) |*m| {
+                        if (cursor) |*m| {
                             m.y += 1;
-                        } else mouse = .{ .x = 0, .y = 0 };
+                        } else cursor = .{ .x = 0, .y = 0 };
                     }
                 },
             }
@@ -121,7 +138,6 @@ pub fn main() !void {
 }
 
 pub const bomb: u8 = 255;
-pub const exploded: u8 = 254;
 
 const Grid = struct {
     width: usize,
@@ -176,7 +192,37 @@ const Grid = struct {
                             0 => ' ',
                             1...8 => |b| '0' + b,
                             bomb => 'o',
-                            exploded => 'X',
+                            else => unreachable,
+                        };
+                        try ctx.writeAllWrapping(&[_]u8{char});
+                    },
+                }
+            }
+            try ctx.writeAllWrapping("\r\n");
+        }
+    }
+    pub fn renderLost(self: *Self, ctx: *spoon.Term.RenderContext) !void {
+        var heightIndex: usize = 0;
+        while (heightIndex < self.bytes.len) : (heightIndex += self.width) {
+            var offset: usize = 0;
+            while (offset < self.width) : (offset += 1) {
+                const byte = self.bytes[heightIndex + offset];
+
+                switch (self.mask[heightIndex + offset]) {
+                    .flagged => {
+                        try ctx.setAttribute(spoon.Attribute{ .bg = .red, .fg = .bright_white });
+                        if (byte == bomb) {
+                            try ctx.writeAllWrapping("F");
+                        } else {
+                            try ctx.writeAllWrapping("x");
+                        }
+                        try ctx.setAttribute(spoon.Attribute{ .bg = .white });
+                    },
+                    .hidden, .shown => {
+                        const char = switch (byte) {
+                            0 => ' ',
+                            1...8 => |b| '0' + b,
+                            bomb => 'O',
                             else => unreachable,
                         };
                         try ctx.writeAllWrapping(&[_]u8{char});
