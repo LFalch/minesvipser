@@ -30,6 +30,10 @@ pub fn main() !u8 {
     return 0;
 }
 
+fn handleSigWinch(_: c_int) callconv(.C) void {
+    term.fetchSize() catch {};
+}
+
 pub fn term_main() !void {
     const grid_w = if (os.argv.len > 1) try std.fmt.parseInt(usize, mem.span(os.argv[1]), 10) else 8;
     const grid_h = if (os.argv.len > 2) try std.fmt.parseInt(usize, mem.span(os.argv[2]), 10) else 8;
@@ -67,6 +71,12 @@ pub fn term_main() !void {
         .request_kitty_keyboard_protocol = !legacy_input,
     });
 
+    try os.sigaction(os.SIG.WINCH, &os.Sigaction{
+        .handler = .{ .handler = handleSigWinch },
+        .mask = os.empty_sigset,
+        .flags = 0,
+    }, null);
+
     try term.fetchSize();
     if (term.width < grid_w or term.height < grid_h) return error.TermTooSmall;
 
@@ -81,6 +91,7 @@ pub fn term_main() !void {
 
     var running = true;
     var lost = false;
+    var help = false;
 
     var cursor: ?Cursor = null;
 
@@ -97,6 +108,14 @@ pub fn term_main() !void {
                 try render.setAttribute(spoon.Attribute{ .bold = true });
                 try render.writeAllWrapping("\r\nYou won!");
                 running = false;
+            } else if (help) {
+                help = false;
+                try render.setAttribute(spoon.Attribute{ .fg = .bright_blue, .bold = true });
+                try render.writeAllWrapping("\rPress q to quit, click or use arrow keys to move the cursor around. Press space or enter to reveal the space under the cursor.");
+                try render.writeAllWrapping("\r\nPress f to set a flag, and t to set a question mark. If holding alt or ctrl, it instead removes it.");
+            } else {
+                try render.setAttribute(spoon.Attribute{ .fg = .bright_blue, .bold = true });
+                try render.writeAllWrapping("\rPress ? or h for help");
             }
         } else {
             try grid.renderLost(&render);
@@ -146,11 +165,19 @@ pub fn term_main() !void {
                         }
                     } else if (in.eqlDescription("f")) {
                         if (cursor) |m| {
-                            try grid.flag(m.x, m.y);
+                            try grid.flag(m.x, m.y, .set, .flagged);
                         }
-                    } else if (in.eqlDescription("A-f") or in.eqlDescription("C-f")) {
+                    } else if (in.eqlDescription("A-f") or in.eqlDescription("C-f") or in.eqlDescription("A-C-f")) {
                         if (cursor) |m| {
-                            try grid.unflag(m.x, m.y);
+                            try grid.flag(m.x, m.y, .remove, .flagged);
+                        }
+                    } else if (in.eqlDescription("t")) {
+                        if (cursor) |m| {
+                            try grid.flag(m.x, m.y, .set, .maybe_flagged);
+                        }
+                    } else if (in.eqlDescription("A-t") or in.eqlDescription("C-t") or in.eqlDescription("A-C-t")) {
+                        if (cursor) |m| {
+                            try grid.flag(m.x, m.y, .remove, .maybe_flagged);
                         }
                     } else if (in.eqlDescription("arrow-left")) {
                         if (cursor) |*m| {
@@ -168,6 +195,8 @@ pub fn term_main() !void {
                         if (cursor) |*m| {
                             m.y += 1;
                         } else cursor = .{ .x = 0, .y = 0 };
+                    } else if (in.eqlDescription("?") or in.eqlDescription("h")) {
+                        help = true;
                     }
                 },
             }
@@ -183,7 +212,7 @@ pub const bomb: u8 = 255;
 
 const Grid = struct {
     width: usize,
-    bytes: []u8,
+    fields: []u8,
     mask: []MaskEntry,
     alloc: mem.Allocator,
 
@@ -191,18 +220,19 @@ const Grid = struct {
         hidden,
         flagged,
         shown,
+        maybe_flagged,
     };
 
     const Self = @This();
     pub fn init(width: usize, height: usize, alloc: mem.Allocator) !Self {
-        var bytes = try alloc.alloc(u8, width * height);
+        var fields = try alloc.alloc(u8, width * height);
         var mask = try alloc.alloc(MaskEntry, width * height);
 
-        mem.set(u8, bytes, 0);
+        mem.set(u8, fields, 0);
         mem.set(MaskEntry, mask, .hidden);
 
         return .{
-            .bytes = bytes,
+            .fields = fields,
             .mask = mask,
             .width = width,
             .alloc = alloc,
@@ -210,17 +240,22 @@ const Grid = struct {
     }
     pub fn deinit(self: Self) void {
         self.alloc.free(self.mask);
-        self.alloc.free(self.bytes);
+        self.alloc.free(self.fields);
     }
     pub fn render(self: *Self, ctx: *spoon.Term.RenderContext) !void {
         var heightIndex: usize = 0;
-        while (heightIndex < self.bytes.len) : (heightIndex += self.width) {
+        while (heightIndex < self.fields.len) : (heightIndex += self.width) {
             var offset: usize = 0;
             while (offset < self.width) : (offset += 1) {
                 switch (self.mask[heightIndex + offset]) {
                     .hidden => {
-                        try ctx.setAttribute(spoon.Attribute{ .bg = .bright_white });
+                        try ctx.setAttribute(spoon.Attribute{ .bg = .cyan });
                         try ctx.writeAllWrapping(" ");
+                        try ctx.setAttribute(spoon.Attribute{ .bg = .white });
+                    },
+                    .maybe_flagged => {
+                        try ctx.setAttribute(spoon.Attribute{ .bg = .red, .fg = .bright_white });
+                        try ctx.writeAllWrapping("?");
                         try ctx.setAttribute(spoon.Attribute{ .bg = .white });
                     },
                     .flagged => {
@@ -229,8 +264,8 @@ const Grid = struct {
                         try ctx.setAttribute(spoon.Attribute{ .bg = .white });
                     },
                     .shown => {
-                        const byte = self.bytes[heightIndex + offset];
-                        const char = switch (byte) {
+                        const field = self.fields[heightIndex + offset];
+                        const char = switch (field) {
                             0 => ' ',
                             1...8 => |b| '0' + b,
                             bomb => 'o',
@@ -245,15 +280,24 @@ const Grid = struct {
     }
     pub fn renderLost(self: *Self, ctx: *spoon.Term.RenderContext) !void {
         var heightIndex: usize = 0;
-        while (heightIndex < self.bytes.len) : (heightIndex += self.width) {
+        while (heightIndex < self.fields.len) : (heightIndex += self.width) {
             var offset: usize = 0;
             while (offset < self.width) : (offset += 1) {
-                const byte = self.bytes[heightIndex + offset];
+                const field = self.fields[heightIndex + offset];
 
                 switch (self.mask[heightIndex + offset]) {
+                    .maybe_flagged => {
+                        try ctx.setAttribute(spoon.Attribute{ .bg = .red, .fg = .bright_white });
+                        if (field == bomb) {
+                            try ctx.writeAllWrapping("!");
+                        } else {
+                            try ctx.writeAllWrapping("X");
+                        }
+                        try ctx.setAttribute(spoon.Attribute{ .bg = .white });
+                    },
                     .flagged => {
                         try ctx.setAttribute(spoon.Attribute{ .bg = .red, .fg = .bright_white });
-                        if (byte == bomb) {
+                        if (field == bomb) {
                             try ctx.writeAllWrapping("F");
                         } else {
                             try ctx.writeAllWrapping("x");
@@ -261,7 +305,7 @@ const Grid = struct {
                         try ctx.setAttribute(spoon.Attribute{ .bg = .white });
                     },
                     .hidden, .shown => {
-                        const char = switch (byte) {
+                        const char = switch (field) {
                             0 => ' ',
                             1...8 => |b| '0' + b,
                             bomb => 'O',
@@ -277,9 +321,9 @@ const Grid = struct {
     pub fn placeBomb(self: *Self, x: usize, y: usize) !void {
         const index = try self.getIndex(x, y);
 
-        if (self.bytes[index] == bomb) return error.AlreadyBomb;
+        if (self.fields[index] == bomb) return error.AlreadyBomb;
 
-        self.bytes[index] = bomb;
+        self.fields[index] = bomb;
         self.increment(x +% 1, y -% 1) catch {};
         self.increment(x, y -% 1) catch {};
         self.increment(x -% 1, y -% 1) catch {};
@@ -289,26 +333,27 @@ const Grid = struct {
         self.increment(x, y +% 1) catch {};
         self.increment(x -% 1, y +% 1) catch {};
     }
-    pub fn flag(self: *Self, x: usize, y: usize) !void {
+    pub fn flag(self: *Self, x: usize, y: usize, setOrRemove: enum{set, remove}, flagEntry: MaskEntry) !void {
         const index = try self.getIndex(x, y);
 
-        if (self.mask[index] != .hidden) return;
-        self.mask[index] = .flagged;
-    }
-    pub fn unflag(self: *Self, x: usize, y: usize) !void {
-        const index = try self.getIndex(x, y);
+        const s: std.meta.Tuple(&.{MaskEntry, MaskEntry}) = switch (setOrRemove) {
+            .set => .{MaskEntry.hidden, flagEntry },
+            .remove => .{flagEntry, MaskEntry.hidden },
+        };
+        const toReplace = s[0];
+        const with = s[1];
 
-        if (self.mask[index] != .flagged) return;
-        self.mask[index] = .hidden;
+        if (self.mask[index] != toReplace) return;
+        self.mask[index] = with;
     }
     pub fn click(self: *Self, x: usize, y: usize) !void {
         const index = try self.getIndex(x, y);
 
         if (self.mask[index] != .hidden) return;
-        if (self.bytes[index] == bomb) return error.Explode;
+        if (self.fields[index] == bomb) return error.Explode;
 
         self.mask[index] = .shown;
-        if (self.bytes[index] == 0) {
+        if (self.fields[index] == 0) {
             self.click(x +% 1, y -% 1) catch {};
             self.click(x, y -% 1) catch {};
             self.click(x -% 1, y -% 1) catch {};
@@ -320,7 +365,7 @@ const Grid = struct {
         }
     }
     pub fn hasWon(self: *Self) !bool {
-        for (self.bytes) |b, i| {
+        for (self.fields) |b, i| {
             const isShown = self.mask[i] == .shown;
             const isBomb = b == bomb;
             if (!isBomb and !isShown) return false;
@@ -329,19 +374,19 @@ const Grid = struct {
     }
     pub fn keepCursorInBounds(self: *const Self, cursor: *Cursor) void {
         if (cursor.x >= self.width) cursor.x = self.width - 1;
-        if (cursor.y >= self.bytes.len / self.width) cursor.y = self.bytes.len / self.width - 1;
+        if (cursor.y >= self.fields.len / self.width) cursor.y = self.fields.len / self.width - 1;
     }
     inline fn increment(self: *Self, x: usize, y: usize) !void {
         const index = try self.getIndex(x, y);
 
-        if (self.bytes[index] < 9) {
-            self.bytes[index] += 1;
+        if (self.fields[index] < 9) {
+            self.fields[index] += 1;
         }
     }
     inline fn getIndex(self: *Self, x: usize, y: usize) !usize {
         if (x >= self.width) return error.XBiggerThanWidth;
         const index = x + y *% self.width;
-        if (index >= self.bytes.len) return error.YBiggerThanHeight;
+        if (index >= self.fields.len) return error.YBiggerThanHeight;
         return index;
     }
 };
