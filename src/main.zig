@@ -2,6 +2,8 @@ const std = @import("std");
 const spoon = @import("spoon");
 const mem = std.mem;
 const os = std.os;
+const posix = std.posix;
+const fmt = std.fmt;
 
 var term: spoon.Term = undefined;
 
@@ -22,7 +24,7 @@ pub fn main() !u8 {
             else => {
                 try stderr.print("Unexpected error: {s}", .{@errorName(e)});
                 return e;
-            }
+            },
         }
         return 1;
     };
@@ -35,13 +37,13 @@ fn handleSigWinch(_: c_int) callconv(.C) void {
 }
 
 pub fn term_main() !void {
-    const grid_w = if (os.argv.len > 1) try std.fmt.parseInt(usize, mem.span(os.argv[1]), 10) else 8;
-    const grid_h = if (os.argv.len > 2) try std.fmt.parseInt(usize, mem.span(os.argv[2]), 10) else 8;
-    const bombs = if (os.argv.len > 3) try std.fmt.parseInt(usize, mem.span(os.argv[3]), 10) else 10;
+    const grid_w = if (os.argv.len > 1) try fmt.parseInt(usize, mem.span(os.argv[1]), 10) else 8;
+    const grid_h = if (os.argv.len > 2) try fmt.parseInt(usize, mem.span(os.argv[2]), 10) else 8;
+    const bombs = if (os.argv.len > 3) try fmt.parseInt(usize, mem.span(os.argv[3]), 10) else 10;
 
-    if (bombs > grid_w*grid_h) return error.TooManyBombs;
+    if (bombs > grid_w * grid_h) return error.TooManyBombs;
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .verbose_log = true }){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
 
@@ -49,11 +51,11 @@ pub fn term_main() !void {
     defer grid.deinit();
 
     {
-        var rand = std.rand.DefaultPrng.init(@bitCast(u64, std.time.timestamp()));
+        var rand = std.rand.DefaultPrng.init(@bitCast(std.time.timestamp()));
         var bombs_placed: usize = 0;
         while (bombs_placed < bombs) {
-            const x = rand.random().intRangeAtMost(usize, 0, grid_w-1);
-            const y = rand.random().intRangeAtMost(usize, 0, grid_h-1);
+            const x = rand.random().intRangeAtMost(usize, 0, grid_w - 1);
+            const y = rand.random().intRangeAtMost(usize, 0, grid_h - 1);
             grid.placeBomb(x, y) catch |e| switch (e) {
                 error.AlreadyBomb => continue,
                 else => return e,
@@ -65,15 +67,14 @@ pub fn term_main() !void {
 
     term = spoon.Term{};
     try term.init(.{});
-    defer term.deinit();
     try term.uncook(.{
         .request_mouse_tracking = true,
         .request_kitty_keyboard_protocol = !legacy_input,
     });
 
-    try os.sigaction(os.SIG.WINCH, &os.Sigaction{
+    try posix.sigaction(posix.SIG.WINCH, &posix.Sigaction{
         .handler = .{ .handler = handleSigWinch },
-        .mask = os.empty_sigset,
+        .mask = posix.empty_sigset,
         .flags = 0,
     }, null);
 
@@ -82,10 +83,10 @@ pub fn term_main() !void {
 
     try term.setWindowTitle("minesvipser", .{});
 
-    var fds: [1]os.pollfd = undefined;
+    var fds: [1]posix.pollfd = undefined;
     fds[0] = .{
         .fd = term.tty.?,
-        .events = os.POLL.IN,
+        .events = posix.POLL.IN,
         .revents = undefined,
     };
 
@@ -135,7 +136,7 @@ pub fn term_main() !void {
         try render.done();
 
         var buf: [128]u8 = undefined;
-        _ = try os.poll(&fds, -1);
+        _ = try posix.poll(&fds, -1);
         const read = try term.readInput(&buf);
         var it = spoon.inputParser(buf[0..read]);
 
@@ -206,6 +207,8 @@ pub fn term_main() !void {
             }
         }
     }
+
+    try term.deinit();
 }
 
 pub const bomb: u8 = 255;
@@ -225,11 +228,11 @@ const Grid = struct {
 
     const Self = @This();
     pub fn init(width: usize, height: usize, alloc: mem.Allocator) !Self {
-        var fields = try alloc.alloc(u8, width * height);
-        var mask = try alloc.alloc(MaskEntry, width * height);
+        const fields = try alloc.alloc(u8, width * height);
+        const mask = try alloc.alloc(MaskEntry, width * height);
 
-        mem.set(u8, fields, 0);
-        mem.set(MaskEntry, mask, .hidden);
+        @memset(fields, 0);
+        @memset(mask, .hidden);
 
         return .{
             .fields = fields,
@@ -333,12 +336,12 @@ const Grid = struct {
         self.increment(x, y +% 1) catch {};
         self.increment(x -% 1, y +% 1) catch {};
     }
-    pub fn flag(self: *Self, x: usize, y: usize, setOrRemove: enum{set, remove}, flagEntry: MaskEntry) !void {
+    pub fn flag(self: *Self, x: usize, y: usize, setOrRemove: enum { set, remove }, flagEntry: MaskEntry) !void {
         const index = try self.getIndex(x, y);
 
-        const s: std.meta.Tuple(&.{MaskEntry, MaskEntry}) = switch (setOrRemove) {
-            .set => .{MaskEntry.hidden, flagEntry },
-            .remove => .{flagEntry, MaskEntry.hidden },
+        const s: std.meta.Tuple(&.{ MaskEntry, MaskEntry }) = switch (setOrRemove) {
+            .set => .{ MaskEntry.hidden, flagEntry },
+            .remove => .{ flagEntry, MaskEntry.hidden },
         };
         const toReplace = s[0];
         const with = s[1];
@@ -365,8 +368,8 @@ const Grid = struct {
         }
     }
     pub fn hasWon(self: *Self) !bool {
-        for (self.fields) |b, i| {
-            const isShown = self.mask[i] == .shown;
+        for (self.fields, self.mask) |b, me| {
+            const isShown = me == .shown;
             const isBomb = b == bomb;
             if (!isBomb and !isShown) return false;
         }
