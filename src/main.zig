@@ -216,33 +216,52 @@ pub const bomb: u8 = 255;
 const Grid = struct {
     width: usize,
     fields: []u8,
-    mask: []MaskEntry,
+    mask: [*]u8,
     alloc: mem.Allocator,
 
     pub const MaskEntry = enum(u2) {
-        hidden,
-        flagged,
-        shown,
-        maybe_flagged,
+        hidden = 0,
+        flagged = 1,
+        shown = 2,
+        maybe_flagged = 3,
     };
+
+    fn mask_entry(self: *const Self, index: usize) MaskEntry {
+        const array_index = index >> 2;
+        // shift twice because we're moving two bits
+        const sub_index: u3 = @as(u3, @truncate(index & 0b11)) << 1;
+        return @enumFromInt((self.mask[array_index] >> sub_index) & 0b11);
+    }
+    fn set_mask_entry(self: *Self, index: usize, me: MaskEntry) void {
+        const array_index = index >> 2;
+        // shift twice because we're moving two bits
+        const sub_index: u3 = @as(u3, @truncate(index & 0b11)) << 1;
+        const mask: u8 = ~(@as(u8, 0b11) << sub_index);
+
+        self.mask[array_index] &= mask;
+        self.mask[array_index] |= @as(u8, @intFromEnum(me)) << sub_index;
+    }
+    inline fn mask_length(fields_len: usize) usize {
+        return (fields_len >> 2) + ((fields_len & 1) | (fields_len & 2));
+    }
 
     const Self = @This();
     pub fn init(width: usize, height: usize, alloc: mem.Allocator) !Self {
         const fields = try alloc.alloc(u8, width * height);
-        const mask = try alloc.alloc(MaskEntry, width * height);
-
         @memset(fields, 0);
-        @memset(mask, .hidden);
+
+        const mask = try alloc.alloc(u8, mask_length(fields.len));
+        @memset(mask, 0);
 
         return .{
             .fields = fields,
-            .mask = mask,
+            .mask = mask.ptr,
             .width = width,
             .alloc = alloc,
         };
     }
     pub fn deinit(self: Self) void {
-        self.alloc.free(self.mask);
+        self.alloc.free(self.mask[0..mask_length(self.fields.len)]);
         self.alloc.free(self.fields);
     }
     pub fn render(self: *Self, ctx: *spoon.Term.RenderContext) !void {
@@ -250,7 +269,7 @@ const Grid = struct {
         while (heightIndex < self.fields.len) : (heightIndex += self.width) {
             var offset: usize = 0;
             while (offset < self.width) : (offset += 1) {
-                switch (self.mask[heightIndex + offset]) {
+                switch (self.mask_entry(heightIndex + offset)) {
                     .hidden => {
                         try ctx.setAttribute(spoon.Attribute{ .bg = .cyan });
                         try ctx.writeAllWrapping(" ");
@@ -288,7 +307,7 @@ const Grid = struct {
             while (offset < self.width) : (offset += 1) {
                 const field = self.fields[heightIndex + offset];
 
-                switch (self.mask[heightIndex + offset]) {
+                switch (self.mask_entry(heightIndex + offset)) {
                     .maybe_flagged => {
                         try ctx.setAttribute(spoon.Attribute{ .bg = .red, .fg = .bright_white });
                         if (field == bomb) {
@@ -346,16 +365,16 @@ const Grid = struct {
         const toReplace = s[0];
         const with = s[1];
 
-        if (self.mask[index] != toReplace) return;
-        self.mask[index] = with;
+        if (self.mask_entry(index) != toReplace) return;
+        self.set_mask_entry(index, with);
     }
     pub fn click(self: *Self, x: usize, y: usize) !void {
         const index = try self.getIndex(x, y);
 
-        if (self.mask[index] != .hidden) return;
+        if (self.mask_entry(index) != .hidden) return;
         if (self.fields[index] == bomb) return error.Explode;
 
-        self.mask[index] = .shown;
+        self.set_mask_entry(index, .shown);
         if (self.fields[index] == 0) {
             self.click(x +% 1, y -% 1) catch {};
             self.click(x, y -% 1) catch {};
@@ -368,8 +387,8 @@ const Grid = struct {
         }
     }
     pub fn hasWon(self: *Self) !bool {
-        for (self.fields, self.mask) |b, me| {
-            const isShown = me == .shown;
+        for (self.fields, 0..) |b, i| {
+            const isShown = self.mask_entry(i) == .shown;
             const isBomb = b == bomb;
             if (!isBomb and !isShown) return false;
         }
