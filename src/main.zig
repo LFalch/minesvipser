@@ -43,9 +43,9 @@ pub fn term_main() !void {
 
     if (bombs > grid_w * grid_h) return error.TooManyBombs;
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .verbose_log = true }){};
-    defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
 
     var grid = try Grid.init(grid_w, grid_h, alloc);
     defer grid.deinit();
