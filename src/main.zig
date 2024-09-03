@@ -157,7 +157,7 @@ pub fn term_main() !void {
                         running = false;
                     } else if (in.eqlDescription("space") or in.eqlDescription("enter")) {
                         if (cursor) |m| {
-                            grid.click(m.x, m.y) catch |e| switch (e) {
+                            grid.click(m.x, m.y, true) catch |e| switch (e) {
                                 error.Explode => {
                                     lost = true;
                                 },
@@ -346,14 +346,9 @@ const Grid = struct {
         if (self.fields[index] == bomb) return error.AlreadyBomb;
 
         self.fields[index] = bomb;
-        self.increment(x +% 1, y -% 1) catch {};
-        self.increment(x, y -% 1) catch {};
-        self.increment(x -% 1, y -% 1) catch {};
-        self.increment(x +% 1, y) catch {};
-        self.increment(x -% 1, y) catch {};
-        self.increment(x +% 1, y +% 1) catch {};
-        self.increment(x, y +% 1) catch {};
-        self.increment(x -% 1, y +% 1) catch {};
+        for (neighbours) |n| {
+            self.increment(x +% n.x, y +% n.y) catch {};
+        }
     }
     pub fn flag(self: *Self, x: usize, y: usize, setOrRemove: enum { set, remove }, flagEntry: MaskEntry) !void {
         const index = try self.getIndex(x, y);
@@ -368,22 +363,38 @@ const Grid = struct {
         if (self.mask_entry(index) != toReplace) return;
         self.set_mask_entry(index, with);
     }
-    pub fn click(self: *Self, x: usize, y: usize) !void {
+    fn get(self: *const Self, x: usize, y: usize, neighbour_flags: *usize) void {
+        const index = self.getIndex(x, y) catch return;
+        if (self.mask_entry(index) == .flagged) {
+            neighbour_flags.* += 1;
+        }
+    }
+    pub fn click(self: *Self, x: usize, y: usize, comptime player_click: bool) !void {
         const index = try self.getIndex(x, y);
+        const field = self.fields[index];
+
+        if (player_click and self.mask_entry(index) == .shown) {
+            var neighbour_flags: usize = 0;
+            for (neighbours) |n| {
+                self.get(x +% n.x, y +% n.y, &neighbour_flags);
+            }
+            if (neighbour_flags >= field) {
+                for (neighbours) |n| {
+                    self.click(x +% n.x, y +% n.y, false) catch |e|
+                        if (e == error.Explode) return error.Explode;
+                }
+            }
+            return;
+        }
 
         if (self.mask_entry(index) != .hidden) return;
-        if (self.fields[index] == bomb) return error.Explode;
+        if (field == bomb) return error.Explode;
 
         self.set_mask_entry(index, .shown);
-        if (self.fields[index] == 0) {
-            self.click(x +% 1, y -% 1) catch {};
-            self.click(x, y -% 1) catch {};
-            self.click(x -% 1, y -% 1) catch {};
-            self.click(x +% 1, y) catch {};
-            self.click(x -% 1, y) catch {};
-            self.click(x +% 1, y +% 1) catch {};
-            self.click(x, y +% 1) catch {};
-            self.click(x -% 1, y +% 1) catch {};
+        if (field == 0) {
+            for (neighbours) |n| {
+                self.click(x +% n.x, y +% n.y, false) catch {};
+            }
         }
     }
     pub fn hasWon(self: *Self) !bool {
@@ -405,13 +416,19 @@ const Grid = struct {
             self.fields[index] += 1;
         }
     }
-    inline fn getIndex(self: *Self, x: usize, y: usize) !usize {
+    inline fn getIndex(self: *const Self, x: usize, y: usize) !usize {
         if (x >= self.width) return error.XBiggerThanWidth;
         const index = x + y *% self.width;
         if (index >= self.fields.len) return error.YBiggerThanHeight;
         return index;
     }
 };
+
+const IS2 = struct { isize, isize };
+const Coord = struct { x: usize, y: usize };
+const neighbours: [8]Coord = @bitCast([_]IS2{
+    .{ -1, 1 }, .{ 0, 1 }, .{ 1, 1 }, .{ -1, 0 }, .{ 1, 0 }, .{ -1, -1 }, .{ 0, -1 }, .{ 1, -1 },
+});
 
 /// Custom panic handler, so that we can try to cook the terminal on a crash,
 /// as otherwise all messages will be mangled.
