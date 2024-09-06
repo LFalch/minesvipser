@@ -67,6 +67,7 @@ pub fn term_main() !void {
 
     term = spoon.Term{};
     try term.init(.{});
+    defer term.deinit() catch {};
     try term.uncook(.{
         .request_mouse_tracking = true,
         .request_kitty_keyboard_protocol = !legacy_input,
@@ -207,8 +208,6 @@ pub fn term_main() !void {
             }
         }
     }
-
-    try term.deinit();
 }
 
 pub const bomb: u8 = 255;
