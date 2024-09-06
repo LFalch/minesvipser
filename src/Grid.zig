@@ -57,6 +57,7 @@ pub fn deinit(self: Self) void {
     self.alloc.free(self.fields);
 }
 pub fn render(self: *Self, ctx: *spoon.Term.RenderContext) !void {
+    try ctx.hideCursor();
     var heightIndex: usize = 0;
     while (heightIndex < self.fields.len) : (heightIndex += self.width) {
         var offset: usize = 0;
@@ -91,6 +92,7 @@ pub fn render(self: *Self, ctx: *spoon.Term.RenderContext) !void {
         }
         try ctx.writeAllWrapping("\r\n");
     }
+    try ctx.showCursor();
 }
 pub fn renderLost(self: *Self, ctx: *spoon.Term.RenderContext) !void {
     var heightIndex: usize = 0;
