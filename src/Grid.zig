@@ -10,6 +10,7 @@ width: usize,
 fields: []u8,
 mask: [*]u8,
 alloc: mem.Allocator,
+bombs_to_place: ?usize,
 
 pub const MaskEntry = enum(u2) {
     hidden = 0,
@@ -38,18 +39,21 @@ inline fn mask_length(fields_len: usize) usize {
 }
 
 const Self = @This();
-pub fn init(width: usize, height: usize, alloc: mem.Allocator) !Self {
+pub fn init(width: usize, height: usize, bombs_to_place: usize, alloc: mem.Allocator) !Self {
     const fields = try alloc.alloc(u8, width * height);
     @memset(fields, 0);
 
     const mask = try alloc.alloc(u8, mask_length(fields.len));
     @memset(mask, 0);
 
+    if (bombs_to_place > width * height -| 5) return error.TooManyBombs;
+
     return .{
         .fields = fields,
         .mask = mask.ptr,
         .width = width,
         .alloc = alloc,
+        .bombs_to_place = bombs_to_place,
     };
 }
 pub fn deinit(self: Self) void {
@@ -163,7 +167,38 @@ fn get(self: *const Self, x: usize, y: usize, neighbour_flags: *usize) void {
         neighbour_flags.* += 1;
     }
 }
+fn place_bombs(self: *Self, cur_x: usize, cur_y: usize) !void {
+    const bombs_to_place = self.bombs_to_place.?;
+    self.bombs_to_place = null;
+
+    const w = self.width;
+    const h = self.fields.len / w;
+
+    var rand = std.rand.DefaultPrng.init(@bitCast(std.time.timestamp()));
+    var bombs_placed: usize = 0;
+    var cursor_neighbours: u4 = 0;
+    while (bombs_placed < bombs_to_place) : (bombs_placed += 1) {
+        const x = rand.random().intRangeLessThan(usize, 0, w);
+        const y = rand.random().intRangeLessThan(usize, 0, h);
+        {
+            if (cur_x == x and cur_y == y) continue;
+            const dx = @abs(@as(isize, @bitCast(x)) - @as(isize, @bitCast(cur_x)));
+            const dy = @abs(@as(isize, @bitCast(y)) - @as(isize, @bitCast(cur_y)));
+            if (dx <= 1 and dy <= 1) {
+                if (cursor_neighbours >= 4) continue;
+                cursor_neighbours += 1;
+            }
+        }
+
+        self.placeBomb(x, y) catch |e| switch (e) {
+            error.AlreadyBomb => continue,
+            else => return e,
+        };
+    }
+}
 pub fn click(self: *Self, x: usize, y: usize, comptime player_click: bool) !void {
+    if (player_click and self.bombs_to_place != null) try self.place_bombs(x, y);
+
     const index = try self.getIndex(x, y);
     const field = self.fields[index];
 
@@ -191,7 +226,8 @@ pub fn click(self: *Self, x: usize, y: usize, comptime player_click: bool) !void
         }
     }
 }
-pub fn hasWon(self: *Self) !bool {
+pub fn hasWon(self: *Self) bool {
+    if (self.bombs_to_place) |_| return false;
     for (self.fields, 0..) |b, i| {
         const isShown = self.mask_entry(i) == .shown;
         const isBomb = b == BOMB;
@@ -206,9 +242,9 @@ pub fn keepCursorInBounds(self: *const Self, cursor: *main.Cursor) void {
 inline fn increment(self: *Self, x: usize, y: usize) !void {
     const index = try self.getIndex(x, y);
 
-    if (self.fields[index] < 9) {
+    if (self.fields[index] < 8) {
         self.fields[index] += 1;
-    }
+    } else std.debug.assert(self.fields[index] == BOMB);
 }
 inline fn getIndex(self: *const Self, x: usize, y: usize) !usize {
     if (x >= self.width) return error.XBiggerThanWidth;

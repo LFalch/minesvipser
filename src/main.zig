@@ -44,28 +44,6 @@ pub fn term_main() !void {
     const grid_h = if (os.argv.len > 2) try fmt.parseInt(usize, mem.span(os.argv[2]), 10) else 8;
     const bombs = if (os.argv.len > 3) try fmt.parseInt(usize, mem.span(os.argv[3]), 10) else 10;
 
-    if (bombs > grid_w * grid_h) return error.TooManyBombs;
-
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer _ = arena.deinit();
-    const alloc = arena.allocator();
-
-    var grid = try Grid.init(grid_w, grid_h, alloc);
-    defer grid.deinit();
-
-    {
-        var rand = std.rand.DefaultPrng.init(@bitCast(std.time.timestamp()));
-        var bombs_placed: usize = 0;
-        while (bombs_placed < bombs) : (bombs_placed += 1) {
-            const x = rand.random().intRangeLessThan(usize, 0, grid_w);
-            const y = rand.random().intRangeLessThan(usize, 0, grid_h);
-            grid.placeBomb(x, y) catch |e| switch (e) {
-                error.AlreadyBomb => continue,
-                else => return e,
-            };
-        }
-    }
-
     term = spoon.Term{};
     try term.init(.{});
     defer term.deinit() catch {};
@@ -92,6 +70,13 @@ pub fn term_main() !void {
         .revents = undefined,
     };
 
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+
+    var grid = try Grid.init(grid_w, grid_h, bombs, alloc);
+    defer grid.deinit();
+
     var running = true;
     var lost = false;
     var help = false;
@@ -108,7 +93,7 @@ pub fn term_main() !void {
             try grid.render(&render);
 
             try render.moveCursorTo(grid_h, 0);
-            if (try grid.hasWon()) {
+            if (grid.hasWon()) {
                 try render.setAttribute(spoon.Attribute{ .bold = true });
                 try render.writeAllWrapping("\r\n" ++ spell_clear_entire_line ++ "You won!");
                 try render.writeAllWrapping("\r\n" ++ spell_clear_entire_line);
