@@ -10,6 +10,7 @@ pub fn build(b: *std.Build) void {
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const optimize = b.standardOptimizeOption(.{});
+    const use_llvm = if (optimize == .Debug) false else null;
 
     const spoon = b.addModule("spoon", .{
         .root_source_file = b.path("deps/zig-spoon/import.zig"),
@@ -21,6 +22,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .use_llvm = use_llvm,
     });
     exe.root_module.addImport("spoon", spoon);
 
@@ -39,6 +41,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .use_llvm = use_llvm,
     });
     exe_unit_tests.root_module.addImport("spoon", spoon);
 

@@ -41,9 +41,11 @@ inline fn mask_length(fields_len: usize) usize {
 const Self = @This();
 pub fn init(width: usize, height: usize, bombs_to_place: usize, alloc: mem.Allocator) !Self {
     const fields = try alloc.alloc(u8, width * height);
+    errdefer alloc.free(fields);
     @memset(fields, 0);
 
     const mask = try alloc.alloc(u8, mask_length(fields.len));
+    errdefer alloc.free(mask);
     @memset(mask, 0);
 
     if (bombs_to_place > width * height -| 5) return error.TooManyBombs;
@@ -174,7 +176,7 @@ fn place_bombs(self: *Self, cur_x: usize, cur_y: usize) !void {
     const w = self.width;
     const h = self.fields.len / w;
 
-    var rand = std.rand.DefaultPrng.init(@bitCast(std.time.timestamp()));
+    var rand = std.Random.DefaultPrng.init(@bitCast(std.time.timestamp()));
     var bombs_placed: usize = 0;
     var cursor_neighbours: u4 = 0;
     while (bombs_placed < bombs_to_place) : (bombs_placed += 1) {

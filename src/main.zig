@@ -52,7 +52,7 @@ pub fn term_main() !void {
         .request_kitty_keyboard_protocol = !legacy_input,
     });
 
-    try posix.sigaction(posix.SIG.WINCH, &posix.Sigaction{
+    posix.sigaction(posix.SIG.WINCH, &posix.Sigaction{
         .handler = .{ .handler = handleSigWinch },
         .mask = posix.empty_sigset,
         .flags = 0,
@@ -200,10 +200,10 @@ pub fn term_main() !void {
     }
 }
 
-/// Custom panic handler, so that we can try to cook the terminal on a crash,
-/// as otherwise all messages will be mangled.
-pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
-    @setCold(true);
+pub const panic = std.debug.FullPanic(panic_fn);
+
+fn panic_fn(msg: []const u8, first_trace_addr: ?usize) noreturn {
+    @branchHint(.cold);
     term.cook() catch {};
-    std.builtin.default_panic(msg, trace, ret_addr);
+    std.debug.defaultPanic(msg, first_trace_addr);
 }
