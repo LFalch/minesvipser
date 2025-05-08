@@ -253,8 +253,10 @@ inline fn getIndex(self: *const Self, x: usize, y: usize) !usize {
     return index;
 }
 
-const IS2 = struct { isize, isize };
 const Coord = struct { x: usize, y: usize };
-const neighbours: [8]Coord = @bitCast([_]IS2{
-    .{ -1, 1 }, .{ 0, 1 }, .{ 1, 1 }, .{ -1, 0 }, .{ 1, 0 }, .{ -1, -1 }, .{ 0, -1 }, .{ 1, -1 },
+fn c(x: isize, y: isize) Coord {
+    return .{ .x = @bitCast(x), .y = @bitCast(y) };
+}
+const neighbours: [8]Coord = @bitCast([_]Coord{
+    c(-1, 1), c(0, 1), c(1, 1), c(-1, 0), c(1, 0), c(-1, -1), c(0, -1), c(1, -1),
 });
