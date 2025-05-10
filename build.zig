@@ -1,21 +1,16 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    // Standard target options allows the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
     const target = b.standardTargetOptions(.{});
 
-    // Standard release options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const optimize = b.standardOptimizeOption(.{});
     const use_llvm = if (optimize == .Debug) false else null;
 
-    const spoon = b.addModule("spoon", .{
-        .root_source_file = b.path("deps/zig-spoon/import.zig"),
+    const spoon = b.dependency("spoon", .{
+        .target = target,
         .optimize = optimize,
     });
+    const spoon_mod = spoon.module("spoon");
 
     const exe = b.addExecutable(.{
         .name = "minesvipser",
@@ -24,7 +19,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .use_llvm = use_llvm,
     });
-    exe.root_module.addImport("spoon", spoon);
+    exe.root_module.addImport("spoon", spoon_mod);
 
     b.installArtifact(exe);
 
@@ -43,7 +38,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .use_llvm = use_llvm,
     });
-    exe_unit_tests.root_module.addImport("spoon", spoon);
+    exe_unit_tests.root_module.addImport("spoon", spoon_mod);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&exe_unit_tests.step);
