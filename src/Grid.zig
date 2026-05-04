@@ -169,14 +169,14 @@ fn get(self: *const Self, x: usize, y: usize, neighbour_flags: *usize) void {
         neighbour_flags.* += 1;
     }
 }
-fn place_bombs(self: *Self, cur_x: usize, cur_y: usize) !void {
+fn place_bombs(self: *Self, io: std.Io, cur_x: usize, cur_y: usize) !void {
     const bombs_to_place = self.bombs_to_place.?;
     self.bombs_to_place = null;
 
     const w = self.width;
     const h = self.fields.len / w;
 
-    var rand = std.Random.DefaultPrng.init(@bitCast(std.time.timestamp()));
+    var rand = std.Random.DefaultPrng.init(@bitCast(std.Io.Timestamp.now(io, .awake).toMicroseconds()));
     var bombs_placed: usize = 0;
     var cursor_neighbours: u4 = 0;
     while (bombs_placed < bombs_to_place) : (bombs_placed += 1) {
@@ -198,8 +198,8 @@ fn place_bombs(self: *Self, cur_x: usize, cur_y: usize) !void {
         };
     }
 }
-pub fn click(self: *Self, x: usize, y: usize, comptime player_click: bool) !void {
-    if (player_click and self.bombs_to_place != null) try self.place_bombs(x, y);
+pub fn click(self: *Self, io: std.Io, x: usize, y: usize, comptime player_click: bool) !void {
+    if (player_click and self.bombs_to_place != null) try self.place_bombs(io, x, y);
 
     const index = try self.getIndex(x, y);
     const field = self.fields[index];
@@ -211,7 +211,7 @@ pub fn click(self: *Self, x: usize, y: usize, comptime player_click: bool) !void
         }
         if (neighbour_flags >= field) {
             for (neighbours) |n| {
-                self.click(x +% n.x, y +% n.y, false) catch |e|
+                self.click(io, x +% n.x, y +% n.y, false) catch |e|
                     if (e == error.Explode) return error.Explode;
             }
         }
@@ -224,7 +224,7 @@ pub fn click(self: *Self, x: usize, y: usize, comptime player_click: bool) !void
     self.set_mask_entry(index, .shown);
     if (field == 0) {
         for (neighbours) |n| {
-            self.click(x +% n.x, y +% n.y, false) catch {};
+            self.click(io, x +% n.x, y +% n.y, false) catch {};
         }
     }
 }
@@ -259,6 +259,6 @@ const Coord = struct { x: usize, y: usize };
 fn c(x: isize, y: isize) Coord {
     return .{ .x = @bitCast(x), .y = @bitCast(y) };
 }
-const neighbours: [8]Coord = @bitCast([_]Coord{
+const neighbours: [8]Coord = [_]Coord{
     c(-1, 1), c(0, 1), c(1, 1), c(-1, 0), c(1, 0), c(-1, -1), c(0, -1), c(1, -1),
-});
+};

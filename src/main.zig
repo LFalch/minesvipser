@@ -14,38 +14,43 @@ const spell_clear_entire_line = "\x1B[2K";
 
 pub const Cursor = struct { x: usize, y: usize };
 
-pub fn main() !u8 {
-    term_main() catch |e| {
-        const stderr = std.io.getStdErr().writer();
+var buffer: [4096]u8 = undefined;
+
+pub fn main(init: std.process.Init) !u8 {
+    term_main(init) catch |e| {
+        var stderr = std.Io.File.stderr().writer(init.io, &buffer);
         switch (e) {
-            error.TooManyBombs => try stderr.print("Too many bombs for given grid size\n", .{}),
-            error.TermTooSmall => try stderr.print("Terminal screen is too small for given grid size\n", .{}),
-            error.InvalidCharacter => try stderr.print("Usage: {s} [width=8] [height=8] [bomb count=10]\n", .{os.argv[0]}),
-            error.Overflow => try stderr.print("Argument was too big\n", .{}),
-            error.OutOfMemory => try stderr.print("Ran out of memory allocating the grid\n", .{}),
+            error.TooManyBombs => try stderr.interface.print("Too many bombs for given grid size\n", .{}),
+            error.TermTooSmall => try stderr.interface.print("Terminal screen is too small for given grid size\n", .{}),
+            error.InvalidCharacter => try stderr.interface.print("Usage: {s} [width=8] [height=8] [bomb count=10]\n", .{init.minimal.args.vector[0]}),
+            error.Overflow => try stderr.interface.print("Argument was too big\n", .{}),
+            error.OutOfMemory => try stderr.interface.print("Ran out of memory allocating the grid\n", .{}),
 
             else => {
-                try stderr.print("Unexpected error: {s}\n", .{@errorName(e)});
+                try stderr.interface.print("Unexpected error: {s}\n", .{@errorName(e)});
+                try stderr.flush();
                 return e;
             },
         }
+        try stderr.flush();
         return 1;
     };
 
     return 0;
 }
 
-fn handleSigWinch(_: c_int) callconv(.C) void {
+fn handleSigWinch(_: posix.SIG) callconv(.c) void {
     term.fetchSize() catch {};
 }
 
-pub fn term_main() !void {
-    const grid_w = if (os.argv.len > 1) try fmt.parseInt(usize, mem.span(os.argv[1]), 10) else 8;
-    const grid_h = if (os.argv.len > 2) try fmt.parseInt(usize, mem.span(os.argv[2]), 10) else 8;
-    const bombs = if (os.argv.len > 3) try fmt.parseInt(usize, mem.span(os.argv[3]), 10) else 10;
+pub fn term_main(init: std.process.Init) !void {
+    const argv = init.minimal.args.vector;
+    const grid_w = if (argv.len > 1) try fmt.parseInt(usize, mem.span(argv[1]), 10) else 8;
+    const grid_h = if (argv.len > 2) try fmt.parseInt(usize, mem.span(argv[2]), 10) else 8;
+    const bombs = if (argv.len > 3) try fmt.parseInt(usize, mem.span(argv[3]), 10) else 10;
 
     term = spoon.Term{};
-    try term.init(.{});
+    try term.init(init.io, .{});
     defer term.deinit() catch {};
     try term.uncook(.{
         .request_mouse_tracking = true,
@@ -54,7 +59,7 @@ pub fn term_main() !void {
 
     posix.sigaction(posix.SIG.WINCH, &posix.Sigaction{
         .handler = .{ .handler = handleSigWinch },
-        .mask = posix.empty_sigset,
+        .mask = posix.sigemptyset(),
         .flags = 0,
     }, null);
 
@@ -65,16 +70,12 @@ pub fn term_main() !void {
 
     var fds: [1]posix.pollfd = undefined;
     fds[0] = .{
-        .fd = term.tty.?,
+        .fd = term.tty.?.handle,
         .events = posix.POLL.IN,
         .revents = undefined,
     };
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer _ = arena.deinit();
-    const alloc = arena.allocator();
-
-    var grid = try Grid.init(grid_w, grid_h, bombs, alloc);
+    var grid = try Grid.init(grid_w, grid_h, bombs, init.arena.allocator());
     defer grid.deinit();
 
     var running = true;
@@ -148,7 +149,7 @@ pub fn term_main() !void {
                         running = false;
                     } else if (in.eqlDescription("space") or in.eqlDescription("enter")) {
                         if (cursor) |m| {
-                            grid.click(m.x, m.y, true) catch |e| switch (e) {
+                            grid.click(init.io, m.x, m.y, true) catch |e| switch (e) {
                                 error.Explode => {
                                     lost = true;
                                 },

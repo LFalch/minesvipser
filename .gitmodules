@@ -1,3 +1,0 @@
-[submodule "deps/zig-spoon"]
-	path = deps/zig-spoon
-	url = https://git.sr.ht/~leon_plickat/zig-spoon

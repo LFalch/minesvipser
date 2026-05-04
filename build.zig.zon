@@ -1,13 +1,13 @@
 .{
     .name = .minesvipser,
-    .version = "1.0.0",
+    .version = "1.0.1",
     .fingerprint = 0xde4f79b133ada3dc,
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.16.0",
 
     .dependencies = .{
         .spoon = .{
-            .url = "git+https://git.sr.ht/~falch/zig-spoon#eac65fc327649d210b57f891b7c9711c7f13ec6e",
-            .hash = "spoon-0.1.0-fqEC3YewAgDbQQd5g7tvVn4koTpLXu16Lodd3EpIc7cT",
+            .url = "git+https://git.sr.ht/~falch/zig-spoon#b632a3582756020b0ee677087fcc577e5c14a7aa",
+            .hash = "spoon-0.1.0-jYZhg_OxAgD7l80Tcb6duZzwUSomQ9s0eDZqcoEtr6en",
         },
     },
     .paths = .{
